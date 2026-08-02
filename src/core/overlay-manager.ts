@@ -25,25 +25,9 @@ export class OverlayManager {
 
   /**
    * 创建并返回一个 OverlayManager 实例。
-   * 包含防御性检查，防止同一视频出现重复的 overlay。
    * @param video 目标视频元素
    */
   public static create(video: HTMLVideoElement): OverlayManager {
-    // 防御性检查：清理可能存在的旧 overlay host
-    const parent = video.parentElement;
-    if (parent) {
-      const existingHosts = parent.querySelectorAll(`[${OverlayManager.HOST_MARKER_ATTR}]`);
-      existingHosts.forEach(host => {
-        console.warn('[Anime4KWebExt] Detected orphaned overlay host, removing:', host);
-        host.remove();
-      });
-    }
-    // 同时检查 body 上可能残留的使用 'body' 策略的 host
-    document.querySelectorAll(`body > [${OverlayManager.HOST_MARKER_ATTR}]`).forEach(host => {
-      console.warn('[Anime4KWebExt] Detected orphaned overlay host on body, removing:', host);
-      host.remove();
-    });
-
     return new OverlayManager(video);
   }
 

@@ -40,6 +40,11 @@ export class VideoEnhancer {
 
   private fixAttempted = false;
 
+  public async enableEnhancement(): Promise<void> {
+    if (this.renderer || this.button.disabled) return;
+    await this.toggleEnhancement();
+  }
+
   /**
    * 检查并修复视频的跨域问题。
    * @param isFallback - 是否作为错误后的兜底方案调用

@@ -67,6 +67,7 @@ export function processVideoElement(videoEl: HTMLVideoElement, source: string): 
     const enhancer = VideoEnhancer.create(videoEl);
     // 立即在 Map 中注册，建立“锁”
     EnhancerMap.associateEnhancer(videoEl, enhancer);
+    if (!videoEl.paused) void enhancer.enableEnhancement();
     console.log('[Anime4KWebExt] Associated new enhancer to video:', videoEl);
   } catch (error) {
     console.error('Failed to create enhancer for video:', videoEl, error);
@@ -80,9 +81,12 @@ export function processVideoElement(videoEl: HTMLVideoElement, source: string): 
  */
 function handleMediaEvent(event: Event): void {
   const target = event.target;
-  // 确认事件源是视频元素
-  if (target instanceof HTMLVideoElement) {
-    processVideoElement(target, `handleMediaEvent:${event.type}`);
+  if (!(target instanceof HTMLVideoElement)) return;
+
+  processVideoElement(target, `handleMediaEvent:${event.type}`);
+  if (event.type === 'playing') {
+    const enhancer = EnhancerMap.getEnhancer(target);
+    void enhancer?.enableEnhancement();
   }
 }
 
