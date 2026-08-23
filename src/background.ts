@@ -2,6 +2,73 @@ import { getSettings, getLocalSettings } from './utils/settings';
 import { ensureLatestConfig } from './utils/migration';
 
 const RULESET_ID = 'ruleset_1';
+const ANIMESR_HOST_NAME = 'com.dimkablin.animesr';
+
+interface NativeReply {
+  requestId?: string;
+  ok: boolean;
+  endpoint?: string;
+  error?: string;
+}
+
+let animeSRPort: chrome.runtime.Port | null = null;
+let animeSRRequestSequence = 0;
+const animeSRRequests = new Map<string, {
+  resolve: (reply: NativeReply) => void;
+  reject: (error: Error) => void;
+}>();
+
+function rejectNativeRequests(message: string): void {
+  for (const request of animeSRRequests.values()) request.reject(new Error(message));
+  animeSRRequests.clear();
+}
+
+function getAnimeSRPort(): chrome.runtime.Port {
+  if (animeSRPort) return animeSRPort;
+
+  const port = chrome.runtime.connectNative(ANIMESR_HOST_NAME);
+  animeSRPort = port;
+  port.onMessage.addListener((reply: NativeReply) => {
+    if (!reply.requestId) return;
+    const pending = animeSRRequests.get(reply.requestId);
+    if (!pending) return;
+    animeSRRequests.delete(reply.requestId);
+    pending.resolve(reply);
+  });
+  port.onDisconnect.addListener(() => {
+    const message = chrome.runtime.lastError?.message || 'AnimeSR native host disconnected.';
+    animeSRPort = null;
+    rejectNativeRequests(message);
+  });
+  return port;
+}
+
+function requestAnimeSRHost(type: string): Promise<NativeReply> {
+  return new Promise((resolve, reject) => {
+    const requestId = `animesr-${++animeSRRequestSequence}`;
+    const timeout = setTimeout(() => {
+      animeSRRequests.delete(requestId);
+      reject(new Error('AnimeSR native host timed out.'));
+    }, 15000);
+    animeSRRequests.set(requestId, {
+      resolve: (reply) => {
+        clearTimeout(timeout);
+        resolve(reply);
+      },
+      reject: (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      },
+    });
+    try {
+      getAnimeSRPort().postMessage({ type, requestId });
+    } catch (error) {
+      clearTimeout(timeout);
+      animeSRRequests.delete(requestId);
+      reject(error as Error);
+    }
+  });
+}
 
 /**
  * 根据当前设置更新 declarativeNetRequest 规则集。
@@ -96,7 +163,12 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 // 监听来自内容脚本/popup/options 的请求
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.type === 'SETTINGS_UPDATED') {
+  if (request.type === 'ANIMESR_NATIVE_CONNECT') {
+    requestAnimeSRHost('hello')
+      .then(sendResponse)
+      .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  } else if (request.type === 'SETTINGS_UPDATED') {
     console.log('[Background] Settings updated, checking DNR rules...');
     updateDNRuleset();
   } else if (request.type === 'OPEN_OPTIONS_PAGE') {

@@ -1,5 +1,6 @@
-import { getSettings, getEffectsForMode } from '../utils/settings';
+import { getSettings, getEffectsForMode, ANIMESR_TENSORRT_MODE_ID } from '../utils/settings';
 import { Renderer } from './renderer';
+import { AnimeSRRenderer, NATIVE_SCALE } from './animesr-renderer';
 import { ANIME4K_APPLIED_ATTR } from '../constants';
 import { Dimensions, Anime4KWebExtSettings, EnhancementMode } from '../types';
 import { OverlayManager } from './overlay-manager';
@@ -9,7 +10,7 @@ import { OverlayManager } from './overlay-manager';
  * 负责管理单个视频元素的增强状态、渲染实例和资源清理
  */
 export class VideoEnhancer {
-  private renderer: Renderer | null = null;
+  private renderer: Renderer | AnimeSRRenderer | null = null;
   private currentModeId: string | null = null;
   private overlay: OverlayManager;
   private button: HTMLButtonElement;
@@ -171,15 +172,32 @@ export class VideoEnhancer {
       });
     }
 
-    if (!navigator.gpu) {
-      throw new Error('WebGPU is not supported on this browser.');
-    }
-
     const settings = await getSettings();
 
     const { selectedModeId, enhancementModes, targetResolutionSetting } = settings;
     const selectedMode = enhancementModes.find((m: EnhancementMode) => m.id === selectedModeId) || enhancementModes.find((m: EnhancementMode) => m.isBuiltIn)!;
     this.currentModeId = selectedMode.id;
+
+    if (selectedMode.id === ANIMESR_TENSORRT_MODE_ID) {
+      const output = this.overlay.getOutputVideo();
+      output.width = this.video.videoWidth * NATIVE_SCALE;
+      output.height = this.video.videoHeight * NATIVE_SCALE;
+      this.renderer = await AnimeSRRenderer.create({
+        video: this.video,
+        output,
+        onError: (error) => {
+          this.disableEnhancement();
+          this.showErrorModal(error.message);
+        },
+        onFirstFrameRendered: () => this.overlay.showOutputVideo(),
+      });
+      console.log(`[Anime4KWebExt] AnimeSR initialized at ${output.width}x${output.height}.`);
+      return;
+    }
+
+    if (!navigator.gpu) {
+      throw new Error('WebGPU is not supported on this browser.');
+    }
 
     const targetDimensions = this.calculateTargetDimensions(
       this.video.videoWidth,
@@ -238,6 +256,14 @@ export class VideoEnhancer {
     console.log('[Anime4KWebExt] Updating renderer with new settings...');
     const { selectedModeId, enhancementModes, targetResolutionSetting } = newSettings;
     const selectedMode = enhancementModes.find((m: EnhancementMode) => m.id === selectedModeId) || enhancementModes.find((m: EnhancementMode) => m.isBuiltIn)!;
+
+    if (selectedMode.id !== this.currentModeId) {
+      this.disableEnhancement();
+      await this.enableEnhancement();
+      return;
+    }
+
+    if (selectedMode.id === ANIMESR_TENSORRT_MODE_ID) return;
 
     const newTargetDimensions = this.calculateTargetDimensions(
       this.video.videoWidth,
@@ -345,6 +371,7 @@ export class VideoEnhancer {
     console.log('[Anime4KWebExt] Video opacity before:', this.video.style.opacity);
     this.releaseWebGPUResources();
     this.overlay.hideCanvas();
+    this.overlay.hideOutputVideo();
     console.log('[Anime4KWebExt] Video opacity after hideCanvas:', this.video.style.opacity);
     this.video.removeAttribute(ANIME4K_APPLIED_ATTR);
     this.button.innerText = chrome.i18n.getMessage('enhanceButton');

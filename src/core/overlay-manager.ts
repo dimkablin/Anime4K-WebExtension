@@ -11,6 +11,7 @@ export class OverlayManager {
   private shadowRoot: ShadowRoot;
   private button: HTMLButtonElement;
   private canvas?: HTMLCanvasElement;
+  private outputVideo?: HTMLVideoElement;
   private hideButtonTimeout?: number;
 
   private attachmentStrategy: 'sibling' | 'body' = 'sibling';
@@ -107,10 +108,10 @@ export class OverlayManager {
     // 更新 Host
     Object.assign(this.host.style, hostStyles);
 
-    // 如果 Canvas 存在，同步更新
-    if (this.canvas) {
-      // Canvas 总是视频的兄弟节点，所以其定位方式不变
-      Object.assign(this.canvas.style, {
+    // Canvas 和 native output 使用相同的覆盖层位置。
+    for (const output of [this.canvas, this.outputVideo]) {
+      if (!output) continue;
+      Object.assign(output.style, {
         top: `${this.video.offsetTop}px`,
         left: `${this.video.offsetLeft}px`,
         width: `${this.video.offsetWidth}px`,
@@ -212,6 +213,17 @@ export class OverlayManager {
     return this.canvas;
   }
 
+  public getOutputVideo(): HTMLVideoElement {
+    if (this.outputVideo) return this.outputVideo;
+    this.outputVideo = document.createElement('video');
+    this.outputVideo.autoplay = true;
+    this.outputVideo.muted = true;
+    this.outputVideo.playsInline = true;
+    this.outputVideo.style.pointerEvents = 'none';
+    this.outputVideo.style.visibility = 'hidden';
+    return this.outputVideo;
+  }
+
   /**
    * 将已创建的 Canvas 附加到 DOM 并使其可见。
    */
@@ -240,6 +252,20 @@ export class OverlayManager {
     this.video.style.opacity = ''; // 恢复原视频
   }
 
+  public showOutputVideo(): void {
+    const output = this.getOutputVideo();
+    if (!output.parentElement) this.video.parentElement?.insertBefore(output, this.video);
+    this.updatePosition();
+    output.style.visibility = 'visible';
+    this.video.style.opacity = '0';
+  }
+
+  public hideOutputVideo(): void {
+    this.outputVideo?.remove();
+    this.outputVideo = undefined;
+    this.video.style.opacity = '';
+  }
+
   /**
    * 分离UI
    * 从 DOM 中移除所有UI元素，但保留其实例以便后续 reattach。
@@ -249,6 +275,9 @@ export class OverlayManager {
     this.host.remove();
     if (this.canvas) {
       this.canvas.remove();
+    }
+    if (this.outputVideo) {
+      this.outputVideo.remove();
     }
   }
 
@@ -273,6 +302,9 @@ export class OverlayManager {
     if (this.canvas) {
       newVideo.parentElement?.insertBefore(this.canvas, this.video);
     }
+    if (this.outputVideo) {
+      newVideo.parentElement?.insertBefore(this.outputVideo, this.video);
+    }
 
     this.resizeObserver.observe(newVideo);
     this.mutationObserver.observe(newVideo, {
@@ -291,6 +323,7 @@ export class OverlayManager {
     this.mutationObserver.disconnect();
     this.host.remove();
     this.hideCanvas();
+    this.hideOutputVideo();
 
     // 如果切换到了 body 策略，移除额外的监听器
     if (this.attachmentStrategy === 'body') {

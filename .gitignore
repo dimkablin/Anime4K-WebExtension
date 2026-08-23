@@ -143,3 +143,5 @@ dist
 /img
 /dist*
 /experiment
+native/models/
+__pycache__/

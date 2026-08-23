@@ -1,7 +1,7 @@
 // popup.ts
 import './popup.css';
 import '../common-vars.css';
-import { getSettings, saveSettings, getLocalSettings, saveLocalSettings, BUILTIN_MODES } from '../../utils/settings';
+import { getSettings, saveSettings, getLocalSettings, saveLocalSettings, BUILTIN_MODES, ANIMESR_TENSORRT_MODE_ID } from '../../utils/settings';
 import { addWhitelistRule, setDefaultWhitelist } from '../../utils/whitelist';
 import { themeManager } from '../theme-manager';
 import type { PerformanceTier, EnhancementMode, CustomMode } from '../../types';
@@ -109,6 +109,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   };
 
+  const updateNativeModeControls = () => {
+    const isAnimeSR = modeSelect.value === ANIMESR_TENSORRT_MODE_ID;
+    resolutionSelect.disabled = isAnimeSR;
+    if (isAnimeSR) resolutionSelect.value = 'x4';
+    const option = modeSelect.querySelector<HTMLOptionElement>(`option[value="${ANIMESR_TENSORRT_MODE_ID}"]`);
+    if (!option) return;
+    option.textContent = 'AnimeSR v2 TensorRT (x4)';
+    if (!isAnimeSR) return;
+
+    option.textContent += ' — checking host…';
+    chrome.runtime.sendMessage({ type: 'ANIMESR_NATIVE_CONNECT' })
+      .then((reply: { ok: boolean }) => {
+        option.textContent = `AnimeSR v2 TensorRT (x4) — ${reply.ok ? 'ready' : 'host required'}`;
+      })
+      .catch(() => {
+        option.textContent = 'AnimeSR v2 TensorRT (x4) — host required';
+      });
+  };
+
   // 加载设置
   let currentSettings;
   let localSettings;
@@ -127,6 +146,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 检查是否选择了自定义模式
     const isCustomMode = currentSettings.selectedModeId.startsWith('custom-');
     updateTierButtonsDisabled(isCustomMode);
+    updateNativeModeControls();
 
     // 如果白名单为空，则设置默认规则
     if (currentSettings.whitelist.length === 0) {
@@ -156,6 +176,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   modeSelect.addEventListener('change', () => {
     const isCustomMode = modeSelect.value.startsWith('custom-');
     updateTierButtonsDisabled(isCustomMode);
+    updateNativeModeControls();
   });
 
   // "保存"按钮点击事件
