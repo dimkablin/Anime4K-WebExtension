@@ -10,10 +10,12 @@ import sys
 import threading
 from pathlib import Path
 
-WIDTH = 1280
-HEIGHT = 720
 SCALE = 4
 MAX_NATIVE_MESSAGE = 1024 * 1024
+ENGINE_NAMES = {
+    (1280, 720): "AnimeSR_v2_fp16_op20_fp16_720x1280.engine",
+    (1920, 1080): "AnimeSR_v2_fp16_op20_fp16_1080x1920.engine",
+}
 
 
 def read_native_message(stream) -> dict | None:
@@ -48,7 +50,7 @@ class MediaSession:
         self.send_lock = threading.Lock()
         self.engine = engine
         self.engine.reset()
-        self.encoder = AV1Encoder(fps, self.send_binary)
+        self.encoder = AV1Encoder(engine.width, engine.height, fps, self.send_binary)
 
     def send_json(self, message: dict) -> None:
         with self.send_lock:
@@ -73,13 +75,14 @@ class MediaSession:
 
 
 class MediaServer:
-    def __init__(self, engine_path: Path):
+    def __init__(self, engine_path: Path, width: int, height: int):
         from animesr_engine import AnimeSREngine
         from werkzeug.serving import WSGIRequestHandler, make_server
 
-        self.engine_path = engine_path
+        self.width = width
+        self.height = height
         # CUDA/TensorRT must be initialized on the native host's main thread.
-        self.engine = AnimeSREngine(engine_path)
+        self.engine = AnimeSREngine(engine_path, width, height)
         self.session_lock = threading.Lock()
         self.token = secrets.token_urlsafe(32)
 
@@ -104,7 +107,7 @@ class MediaServer:
 
         from simple_websocket import ConnectionClosed, Server
 
-        websocket = Server.accept(environ, max_message_size=WIDTH * HEIGHT * 4)
+        websocket = Server.accept(environ, max_message_size=self.width * self.height * 4)
         with self.session_lock:
             self._serve_websocket(websocket)
         return []
@@ -120,15 +123,15 @@ class MediaServer:
             config = json.loads(message) if isinstance(message, str) else {}
             if config.get("type") != "start":
                 raise ValueError("The first media message must start a session.")
-            if (int(config.get("width", 0)), int(config.get("height", 0))) != (WIDTH, HEIGHT):
-                raise ValueError("AnimeSR currently requires 1280x720 input.")
+            if (int(config.get("width", 0)), int(config.get("height", 0))) != (self.width, self.height):
+                raise ValueError(f"AnimeSR engine is configured for {self.width}x{self.height} input.")
 
             session = MediaSession(websocket, self.engine, float(config.get("fps", 24)))
             print("AnimeSR TensorRT session initialized.", file=sys.stderr, flush=True)
             session.send_json({
                 "type": "started",
-                "outputWidth": WIDTH * SCALE,
-                "outputHeight": HEIGHT * SCALE,
+                "outputWidth": self.width * SCALE,
+                "outputHeight": self.height * SCALE,
             })
             while True:
                 message = websocket.receive()
@@ -154,9 +157,12 @@ class MediaServer:
         self.server.shutdown()
 
 
-def resolve_engine_path() -> Path:
+def resolve_engine_path(width: int, height: int) -> Path:
+    engine_name = ENGINE_NAMES.get((width, height))
+    if not engine_name:
+        raise ValueError("AnimeSR supports 1280x720 and 1920x1080 input.")
     model_dir = Path(os.environ.get("ANIMESR_MODEL_DIR", Path(__file__).with_name("models")))
-    return model_dir / "AnimeSR_v2_fp16_op20_fp16_720x1280.engine"
+    return model_dir / engine_name
 
 
 def self_test() -> None:
@@ -167,7 +173,9 @@ def self_test() -> None:
     write_native_message(stream, expected)
     stream.seek(0)
     assert read_native_message(stream) == expected
-    assert SCALE == 4 and WIDTH * SCALE == 5120 and HEIGHT * SCALE == 2880
+    assert SCALE == 4
+    assert (1280 * SCALE, 720 * SCALE) == (5120, 2880)
+    assert (1920 * SCALE, 1080 * SCALE) == (7680, 4320)
 
 
 def main() -> int:
@@ -188,9 +196,17 @@ def main() -> int:
             try:
                 if request.get("type") != "hello":
                     raise ValueError("Unknown native host request.")
-                if media_server is None:
-                    media_server = MediaServer(resolve_engine_path())
-                response = {"requestId": request_id, "ok": True, "endpoint": media_server.endpoint}
+                width = int(request.get("width") or 0)
+                height = int(request.get("height") or 0)
+                if not width or not height:
+                    response = {"requestId": request_id, "ok": True, "supported": list(ENGINE_NAMES)}
+                else:
+                    if media_server and (media_server.width, media_server.height) != (width, height):
+                        media_server.close()
+                        media_server = None
+                    if media_server is None:
+                        media_server = MediaServer(resolve_engine_path(width, height), width, height)
+                    response = {"requestId": request_id, "ok": True, "endpoint": media_server.endpoint}
             except Exception as error:
                 response = {"requestId": request_id, "ok": False, "error": str(error)}
             write_native_message(sys.stdout.buffer, response)

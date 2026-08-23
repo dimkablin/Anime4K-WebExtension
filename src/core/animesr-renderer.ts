@@ -1,7 +1,6 @@
 export const NATIVE_SCALE = 4;
 
-const INPUT_WIDTH = 1280;
-const INPUT_HEIGHT = 720;
+const SUPPORTED_INPUTS = new Set(['1280x720', '1920x1080']);
 const MIME_TYPE = 'video/mp4; codecs="av01.0.13M.08"';
 
 interface NativeConnectReply {
@@ -26,8 +25,10 @@ interface ServerMessage {
 
 export class AnimeSRRenderer {
   private readonly mediaSource = new MediaSource();
-  private readonly captureCanvas = new OffscreenCanvas(INPUT_WIDTH, INPUT_HEIGHT);
-  private readonly captureContext = this.captureCanvas.getContext('2d', { willReadFrequently: true })!;
+  private readonly inputWidth: number;
+  private readonly inputHeight: number;
+  private readonly captureCanvas: OffscreenCanvas;
+  private readonly captureContext: OffscreenCanvasRenderingContext2D;
   private readonly segments: Uint8Array[] = [];
   private readonly objectUrl: string;
   private socket: WebSocket | null = null;
@@ -38,6 +39,10 @@ export class AnimeSRRenderer {
   private destroyed = false;
 
   private constructor(private options: RendererOptions) {
+    this.inputWidth = options.video.videoWidth;
+    this.inputHeight = options.video.videoHeight;
+    this.captureCanvas = new OffscreenCanvas(this.inputWidth, this.inputHeight);
+    this.captureContext = this.captureCanvas.getContext('2d', { willReadFrequently: true })!;
     this.objectUrl = URL.createObjectURL(this.mediaSource);
     this.options.output.src = this.objectUrl;
   }
@@ -54,14 +59,18 @@ export class AnimeSRRenderer {
   }
 
   private static assertInputSize(video: HTMLVideoElement): void {
-    if (video.videoWidth !== INPUT_WIDTH || video.videoHeight !== INPUT_HEIGHT) {
-      throw new Error(`AnimeSR TensorRT currently requires ${INPUT_WIDTH}x${INPUT_HEIGHT} input.`);
+    if (!SUPPORTED_INPUTS.has(`${video.videoWidth}x${video.videoHeight}`)) {
+      throw new Error('AnimeSR TensorRT currently supports 1280x720 and 1920x1080 input.');
     }
   }
 
   private async initialize(): Promise<void> {
     this.mediaSource.addEventListener('sourceopen', () => this.openSourceBuffer(), { once: true });
-    const native = await chrome.runtime.sendMessage({ type: 'ANIMESR_NATIVE_CONNECT' }) as NativeConnectReply;
+    const native = await chrome.runtime.sendMessage({
+      type: 'ANIMESR_NATIVE_CONNECT',
+      width: this.inputWidth,
+      height: this.inputHeight,
+    }) as NativeConnectReply;
     if (!native.ok || !native.endpoint) {
       throw new Error(native.error || 'AnimeSR native host is not installed.');
     }
@@ -87,8 +96,8 @@ export class AnimeSRRenderer {
       };
       socket.onopen = () => socket.send(JSON.stringify({
         type: 'start',
-        width: INPUT_WIDTH,
-        height: INPUT_HEIGHT,
+        width: this.inputWidth,
+        height: this.inputHeight,
         fps: 24,
       }));
       this.socket = socket;
@@ -121,7 +130,7 @@ export class AnimeSRRenderer {
     if (message.type !== 'started') return;
 
     clearTimeout(timeout);
-    if (message.outputWidth !== INPUT_WIDTH * NATIVE_SCALE || message.outputHeight !== INPUT_HEIGHT * NATIVE_SCALE) {
+    if (message.outputWidth !== this.inputWidth * NATIVE_SCALE || message.outputHeight !== this.inputHeight * NATIVE_SCALE) {
       reject(new Error('AnimeSR native host returned an unexpected output size.'));
       return;
     }
@@ -176,8 +185,8 @@ export class AnimeSRRenderer {
   private captureFrame(): void {
     if (this.frameInFlight || this.options.video.paused || this.socket?.readyState !== WebSocket.OPEN) return;
     try {
-      this.captureContext.drawImage(this.options.video, 0, 0, INPUT_WIDTH, INPUT_HEIGHT);
-      const rgba = this.captureContext.getImageData(0, 0, INPUT_WIDTH, INPUT_HEIGHT).data.buffer;
+      this.captureContext.drawImage(this.options.video, 0, 0, this.inputWidth, this.inputHeight);
+      const rgba = this.captureContext.getImageData(0, 0, this.inputWidth, this.inputHeight).data.buffer;
       this.frameInFlight = true;
       this.socket.send(rgba);
     } catch (error) {
@@ -197,6 +206,9 @@ export class AnimeSRRenderer {
 
   async updateVideoSource(video: HTMLVideoElement): Promise<void> {
     AnimeSRRenderer.assertInputSize(video);
+    if (video.videoWidth !== this.inputWidth || video.videoHeight !== this.inputHeight) {
+      throw new Error('Restart AnimeSR after switching to a different source resolution.');
+    }
     this.options.video.removeEventListener('seeking', this.resetTemporalState);
     this.options.video = video;
     this.options.video.addEventListener('seeking', this.resetTemporalState);

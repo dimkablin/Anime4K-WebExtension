@@ -43,7 +43,7 @@ function getAnimeSRPort(): chrome.runtime.Port {
   return port;
 }
 
-function requestAnimeSRHost(type: string): Promise<NativeReply> {
+function requestAnimeSRHost(type: string, payload: Record<string, unknown> = {}): Promise<NativeReply> {
   return new Promise((resolve, reject) => {
     const requestId = `animesr-${++animeSRRequestSequence}`;
     const timeout = setTimeout(() => {
@@ -61,7 +61,7 @@ function requestAnimeSRHost(type: string): Promise<NativeReply> {
       },
     });
     try {
-      getAnimeSRPort().postMessage({ type, requestId });
+      getAnimeSRPort().postMessage({ type, requestId, ...payload });
     } catch (error) {
       clearTimeout(timeout);
       animeSRRequests.delete(requestId);
@@ -164,7 +164,10 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 // 监听来自内容脚本/popup/options 的请求
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'ANIMESR_NATIVE_CONNECT') {
-    requestAnimeSRHost('hello')
+    requestAnimeSRHost('hello', {
+      width: request.width,
+      height: request.height,
+    })
       .then(sendResponse)
       .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
     return true;

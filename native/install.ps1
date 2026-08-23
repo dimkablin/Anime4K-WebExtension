@@ -8,15 +8,20 @@ $ErrorActionPreference = 'Stop'
 $hostName = 'com.dimkablin.animesr'
 $installRoot = Join-Path $env:LOCALAPPDATA 'Anime4K-WebExtension\AnimeSR'
 $modelRoot = Join-Path $installRoot 'models'
-$engineName = 'AnimeSR_v2_fp16_op20_fp16_720x1280.engine'
-$engineSource = Join-Path $ModelDirectory $engineName
+$engineNames = @(
+    'AnimeSR_v2_fp16_op20_fp16_720x1280.engine',
+    'AnimeSR_v2_fp16_op20_fp16_1080x1920.engine'
+)
 $ffmpeg = (Get-Command ffmpeg -ErrorAction Stop).Source
 
 if (-not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
     throw "Compatible Python runtime was not found at $PythonPath"
 }
-if (-not (Test-Path -LiteralPath $engineSource -PathType Leaf)) {
-    throw "AnimeSR TensorRT engine was not found at $engineSource"
+foreach ($engineName in $engineNames) {
+    $engineSource = Join-Path $ModelDirectory $engineName
+    if (-not (Test-Path -LiteralPath $engineSource -PathType Leaf)) {
+        throw "AnimeSR TensorRT engine was not found at $engineSource"
+    }
 }
 
 & $PythonPath -c 'import torch, tensorrt, simple_websocket, werkzeug' | Out-Null
@@ -27,7 +32,9 @@ if ($LASTEXITCODE -ne 0) {
 New-Item -ItemType Directory -Force -Path $modelRoot | Out-Null
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'animesr_host.py') -Destination $installRoot -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'animesr_engine.py') -Destination $installRoot -Force
-Copy-Item -LiteralPath $engineSource -Destination $modelRoot -Force
+foreach ($engineName in $engineNames) {
+    Copy-Item -LiteralPath (Join-Path $ModelDirectory $engineName) -Destination $modelRoot -Force
+}
 
 $launcherPath = Join-Path $installRoot 'animesr_host.cmd'
 $hostPath = Join-Path $installRoot 'animesr_host.py'

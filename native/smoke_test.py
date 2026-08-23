@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import argparse
 import os
 import struct
 import subprocess
@@ -12,7 +13,8 @@ from pathlib import Path
 
 from simple_websocket import Client, ConnectionClosed
 
-from animesr_engine import FRAME_BYTES, HEIGHT, SCALE, WIDTH
+from animesr_engine import SCALE
+from animesr_host import ENGINE_NAMES
 
 
 def send_native(process: subprocess.Popen, message: dict) -> None:
@@ -29,6 +31,15 @@ def receive_native(process: subprocess.Popen) -> dict:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--width", type=int, default=1280)
+    parser.add_argument("--height", type=int, default=720)
+    args = parser.parse_args()
+    width, height = args.width, args.height
+    if (width, height) not in ENGINE_NAMES:
+        raise ValueError("Smoke test supports 1280x720 and 1920x1080.")
+    frame_bytes = width * height * 4
+
     root = Path(__file__).resolve().parent
     environment = os.environ.copy()
     environment.setdefault("ANIMESR_MODEL_DIR", str(root / "models"))
@@ -42,20 +53,22 @@ def main() -> int:
     websocket = None
     started_at = time.perf_counter()
     try:
-        send_native(process, {"type": "hello", "requestId": "smoke"})
+        send_native(process, {
+            "type": "hello", "requestId": "smoke", "width": width, "height": height
+        })
         native = receive_native(process)
         if not native.get("ok"):
             raise RuntimeError(native.get("error", "Native host handshake failed."))
 
-        websocket = Client.connect(native["endpoint"], max_message_size=FRAME_BYTES)
-        websocket.send(json.dumps({"type": "start", "width": WIDTH, "height": HEIGHT, "fps": 24}))
-        started_message = websocket.receive(timeout=20)
+        websocket = Client.connect(native["endpoint"], max_message_size=frame_bytes)
+        websocket.send(json.dumps({"type": "start", "width": width, "height": height, "fps": 24}))
+        started_message = websocket.receive(timeout=60)
         if started_message is None:
-            raise TimeoutError("AnimeSR session did not start within 20 seconds.")
+            raise TimeoutError("AnimeSR session did not start within 60 seconds.")
         started = json.loads(started_message)
-        assert started == {"type": "started", "outputWidth": WIDTH * SCALE, "outputHeight": HEIGHT * SCALE}
+        assert started == {"type": "started", "outputWidth": width * SCALE, "outputHeight": height * SCALE}
 
-        frame = bytes(FRAME_BYTES)
+        frame = bytes(frame_bytes)
         websocket.send(frame)
         assert json.loads(websocket.receive(timeout=10))["type"] == "ready"
         websocket.send(frame)
@@ -76,7 +89,7 @@ def main() -> int:
         assert received_ready, "Native host did not acknowledge the inferred frame."
         assert received_segment, "Native host did not return an AV1/fMP4 segment."
         elapsed = time.perf_counter() - started_at
-        print(f"AnimeSR native smoke test passed: {WIDTH}x{HEIGHT} -> {WIDTH * SCALE}x{HEIGHT * SCALE} in {elapsed:.2f}s")
+        print(f"AnimeSR native smoke test passed: {width}x{height} -> {width * SCALE}x{height * SCALE} in {elapsed:.2f}s")
         return 0
     finally:
         if websocket:

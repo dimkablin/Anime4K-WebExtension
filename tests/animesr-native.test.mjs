@@ -4,7 +4,7 @@ import test from 'node:test';
 
 const read = (path) => readFileSync(path, 'utf8');
 
-test('AnimeSR mode keeps the native x4 output contract', () => {
+test('AnimeSR mode keeps native x4 output for 720p and 1080p', () => {
   const settings = read('src/utils/settings.ts');
   const renderer = read('src/core/animesr-renderer.ts');
   const host = read('native/animesr_host.py');
@@ -12,6 +12,8 @@ test('AnimeSR mode keeps the native x4 output contract', () => {
   assert.match(settings, /builtin-animesr-v2-tensorrt/);
   assert.match(renderer, /NATIVE_SCALE = 4/);
   assert.match(host, /SCALE = 4/);
+  assert.match(renderer, /1920[^\n]+1080/);
+  assert.match(host, /1920[^\n]+1080/);
   assert.doesNotMatch(host, /interpolate\s*\(/);
 });
 
@@ -39,4 +41,5 @@ test('Windows installer registers the native host for Edge and Chrome', () => {
   assert.match(installer, /Microsoft\\Edge\\NativeMessagingHosts/);
   assert.match(installer, /Google\\Chrome\\NativeMessagingHosts/);
   assert.match(installer, /com\.dimkablin\.animesr/);
+  assert.match(installer, /1080x1920\.engine/);
 });

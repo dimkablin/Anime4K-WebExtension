@@ -115,16 +115,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (isAnimeSR) resolutionSelect.value = 'x4';
     const option = modeSelect.querySelector<HTMLOptionElement>(`option[value="${ANIMESR_TENSORRT_MODE_ID}"]`);
     if (!option) return;
-    option.textContent = 'AnimeSR v2 TensorRT (x4)';
+    option.textContent = 'AnimeSR v2 TensorRT (x4, 720p/FHD)';
     if (!isAnimeSR) return;
 
     option.textContent += ' — checking host…';
     chrome.runtime.sendMessage({ type: 'ANIMESR_NATIVE_CONNECT' })
       .then((reply: { ok: boolean }) => {
-        option.textContent = `AnimeSR v2 TensorRT (x4) — ${reply.ok ? 'ready' : 'host required'}`;
+        option.textContent = `AnimeSR v2 TensorRT (x4, 720p/FHD) — ${reply.ok ? 'ready' : 'host required'}`;
       })
       .catch(() => {
-        option.textContent = 'AnimeSR v2 TensorRT (x4) — host required';
+        option.textContent = 'AnimeSR v2 TensorRT (x4, 720p/FHD) — host required';
       });
   };
 

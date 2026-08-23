@@ -27,7 +27,7 @@ export const BUILTIN_MODES: BuiltInMode[] = [
   { id: 'builtin-mode-aa', baseMode: 'A+A', name: 'Mode A+A', isBuiltIn: true },
   { id: 'builtin-mode-bb', baseMode: 'B+B', name: 'Mode B+B', isBuiltIn: true },
   { id: 'builtin-mode-ca', baseMode: 'C+A', name: 'Mode C+A', isBuiltIn: true },
-  { id: ANIMESR_TENSORRT_MODE_ID, baseMode: 'A', name: 'AnimeSR v2 TensorRT (x4)', isBuiltIn: true },
+  { id: ANIMESR_TENSORRT_MODE_ID, baseMode: 'A', name: 'AnimeSR v2 TensorRT (x4, 720p/FHD)', isBuiltIn: true },
 ];
 
 // ===== 默认设置 =====

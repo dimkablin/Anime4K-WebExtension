@@ -8,16 +8,13 @@ import threading
 from pathlib import Path
 from typing import Callable
 
-WIDTH = 1280
-HEIGHT = 720
 SCALE = 4
-FRAME_BYTES = WIDTH * HEIGHT * 4
 
 
 class AnimeSREngine:
-    """Owns the recurrent TensorRT state for one 720p stream."""
+    """Owns the recurrent TensorRT state for one supported input profile."""
 
-    def __init__(self, engine_path: Path):
+    def __init__(self, engine_path: Path, width: int, height: int):
         import tensorrt as trt
         import torch
 
@@ -27,6 +24,9 @@ class AnimeSREngine:
             raise RuntimeError("AnimeSR requires an NVIDIA CUDA GPU.")
 
         self.torch = torch
+        self.width = width
+        self.height = height
+        self.frame_bytes = width * height * 4
         self.dtype = torch.float16
         self.logger = trt.Logger(trt.Logger.WARNING)
         self.runtime = trt.Runtime(self.logger)
@@ -41,9 +41,9 @@ class AnimeSREngine:
     def _allocate_buffers(self) -> None:
         torch = self.torch
         device = torch.device("cuda")
-        frame_shape = (1, 3, HEIGHT, WIDTH)
-        output_shape = (1, 3, HEIGHT * SCALE, WIDTH * SCALE)
-        state_shape = (1, 64, HEIGHT, WIDTH)
+        frame_shape = (1, 3, self.height, self.width)
+        output_shape = (1, 3, self.height * SCALE, self.width * SCALE)
+        state_shape = (1, 64, self.height, self.width)
 
         self.prev_frame = torch.zeros(frame_shape, device=device, dtype=self.dtype).contiguous()
         self.curr_frame = torch.zeros(frame_shape, device=device, dtype=self.dtype).contiguous()
@@ -91,10 +91,10 @@ class AnimeSREngine:
         return rgb.squeeze(0).permute(1, 2, 0).contiguous().cpu().numpy().tobytes()
 
     def _rgba_to_tensor(self, rgba: bytes):
-        if len(rgba) != FRAME_BYTES:
-            raise ValueError(f"Expected {FRAME_BYTES} RGBA bytes, received {len(rgba)}")
+        if len(rgba) != self.frame_bytes:
+            raise ValueError(f"Expected {self.frame_bytes} RGBA bytes, received {len(rgba)}")
         frame = self.torch.frombuffer(bytearray(rgba), dtype=self.torch.uint8)
-        frame = frame.reshape(HEIGHT, WIDTH, 4)[:, :, :3]
+        frame = frame.reshape(self.height, self.width, 4)[:, :, :3]
         return frame.permute(2, 0, 1).unsqueeze(0).cuda().to(self.dtype).div_(255)
 
     def _infer(self, current, following):
@@ -116,7 +116,7 @@ class AnimeSREngine:
 class AV1Encoder:
     """Feeds native x4 RGB frames to NVENC and forwards fragmented MP4."""
 
-    def __init__(self, fps: float, send_segment: Callable[[bytes], None]):
+    def __init__(self, width: int, height: int, fps: float, send_segment: Callable[[bytes], None]):
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
             raise RuntimeError("ffmpeg with av1_nvenc is required in PATH.")
@@ -125,7 +125,7 @@ class AV1Encoder:
             [
                 ffmpeg, "-hide_banner", "-loglevel", "error",
                 "-f", "rawvideo", "-pix_fmt", "rgb24",
-                "-s", f"{WIDTH * SCALE}x{HEIGHT * SCALE}",
+                "-s", f"{width * SCALE}x{height * SCALE}",
                 "-r", str(min(max(fps, 1.0), 60.0)), "-i", "pipe:0", "-an",
                 "-pix_fmt", "yuv420p", "-c:v", "av1_nvenc",
                 "-preset", "p1", "-tune", "ull", "-rc", "constqp", "-qp", "26",
