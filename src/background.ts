@@ -165,6 +165,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'ANIMESR_NATIVE_CONNECT') {
     requestAnimeSRHost('hello', {
+      modeId: request.modeId,
       width: request.width,
       height: request.height,
     })

@@ -1,6 +1,6 @@
-import { getSettings, getEffectsForMode, ANIMESR_TENSORRT_MODE_ID } from '../utils/settings';
+import { getSettings, getEffectsForMode, ANIMESR_TENSORRT_MODE_ID, ANISCALE2_TENSORRT_MODE_ID } from '../utils/settings';
 import { Renderer } from './renderer';
-import { AnimeSRRenderer, NATIVE_SCALE } from './animesr-renderer';
+import { AnimeSRRenderer, NATIVE_SCALE, ANISCALE2_NATIVE_SCALE } from './animesr-renderer';
 import { ANIME4K_APPLIED_ATTR } from '../constants';
 import { Dimensions, Anime4KWebExtSettings, EnhancementMode } from '../types';
 import { OverlayManager } from './overlay-manager';
@@ -178,20 +178,23 @@ export class VideoEnhancer {
     const selectedMode = enhancementModes.find((m: EnhancementMode) => m.id === selectedModeId) || enhancementModes.find((m: EnhancementMode) => m.isBuiltIn)!;
     this.currentModeId = selectedMode.id;
 
-    if (selectedMode.id === ANIMESR_TENSORRT_MODE_ID) {
+    if (selectedMode.id === ANIMESR_TENSORRT_MODE_ID || selectedMode.id === ANISCALE2_TENSORRT_MODE_ID) {
+      const scale = selectedMode.id === ANISCALE2_TENSORRT_MODE_ID ? ANISCALE2_NATIVE_SCALE : NATIVE_SCALE;
       const output = this.overlay.getOutputVideo();
-      output.width = this.video.videoWidth * NATIVE_SCALE;
-      output.height = this.video.videoHeight * NATIVE_SCALE;
+      output.width = this.video.videoWidth * scale;
+      output.height = this.video.videoHeight * scale;
       this.renderer = await AnimeSRRenderer.create({
         video: this.video,
         output,
+        modeId: selectedMode.id,
+        scale,
         onError: (error) => {
           this.disableEnhancement();
           this.showErrorModal(error.message);
         },
         onFirstFrameRendered: () => this.overlay.showOutputVideo(),
       });
-      console.log(`[Anime4KWebExt] AnimeSR initialized at ${output.width}x${output.height}.`);
+      console.log(`[Anime4KWebExt] ${selectedMode.name} initialized at ${output.width}x${output.height}.`);
       return;
     }
 
@@ -263,7 +266,7 @@ export class VideoEnhancer {
       return;
     }
 
-    if (selectedMode.id === ANIMESR_TENSORRT_MODE_ID) return;
+    if (selectedMode.id === ANIMESR_TENSORRT_MODE_ID || selectedMode.id === ANISCALE2_TENSORRT_MODE_ID) return;
 
     const newTargetDimensions = this.calculateTargetDimensions(
       this.video.videoWidth,

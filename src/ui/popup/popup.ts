@@ -1,7 +1,7 @@
 // popup.ts
 import './popup.css';
 import '../common-vars.css';
-import { getSettings, saveSettings, getLocalSettings, saveLocalSettings, BUILTIN_MODES, ANIMESR_TENSORRT_MODE_ID } from '../../utils/settings';
+import { getSettings, saveSettings, getLocalSettings, saveLocalSettings, BUILTIN_MODES, ANIMESR_TENSORRT_MODE_ID, ANISCALE2_TENSORRT_MODE_ID } from '../../utils/settings';
 import { addWhitelistRule, setDefaultWhitelist } from '../../utils/whitelist';
 import { themeManager } from '../theme-manager';
 import type { PerformanceTier, EnhancementMode, CustomMode } from '../../types';
@@ -111,20 +111,26 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const updateNativeModeControls = () => {
     const isAnimeSR = modeSelect.value === ANIMESR_TENSORRT_MODE_ID;
-    resolutionSelect.disabled = isAnimeSR;
-    if (isAnimeSR) resolutionSelect.value = 'x4';
-    const option = modeSelect.querySelector<HTMLOptionElement>(`option[value="${ANIMESR_TENSORRT_MODE_ID}"]`);
+    const isAniScale2 = modeSelect.value === ANISCALE2_TENSORRT_MODE_ID;
+    const isNative = isAnimeSR || isAniScale2;
+    resolutionSelect.disabled = isNative;
+    if (isNative) resolutionSelect.value = isAniScale2 ? 'x2' : 'x4';
+    if (!isNative) return;
+
+    const label = isAniScale2
+      ? 'AniScale2 TensorRT (x2, FHD→4K realtime)'
+      : 'AnimeSR v2 TensorRT (x4, 720p/FHD)';
+    const option = modeSelect.querySelector<HTMLOptionElement>(`option[value="${modeSelect.value}"]`);
     if (!option) return;
-    option.textContent = 'AnimeSR v2 TensorRT (x4, 720p/FHD)';
-    if (!isAnimeSR) return;
+    option.textContent = label;
 
     option.textContent += ' — checking host…';
-    chrome.runtime.sendMessage({ type: 'ANIMESR_NATIVE_CONNECT' })
+    chrome.runtime.sendMessage({ type: 'ANIMESR_NATIVE_CONNECT', modeId: modeSelect.value })
       .then((reply: { ok: boolean }) => {
-        option.textContent = `AnimeSR v2 TensorRT (x4, 720p/FHD) — ${reply.ok ? 'ready' : 'host required'}`;
+        option.textContent = `${label} — ${reply.ok ? 'ready' : 'host required'}`;
       })
       .catch(() => {
-        option.textContent = 'AnimeSR v2 TensorRT (x4, 720p/FHD) — host required';
+        option.textContent = `${label} — host required`;
       });
   };
 

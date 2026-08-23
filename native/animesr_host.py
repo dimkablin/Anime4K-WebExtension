@@ -12,9 +12,18 @@ from pathlib import Path
 
 SCALE = 4
 MAX_NATIVE_MESSAGE = 1024 * 1024
+ANIMESR_MODE_ID = "builtin-animesr-v2-tensorrt"
+ANISCALE2_MODE_ID = "builtin-aniscale2-tensorrt"
 ENGINE_NAMES = {
     (1280, 720): "AnimeSR_v2_fp16_op20_fp16_720x1280.engine",
     (1920, 1080): "AnimeSR_v2_fp16_op20_fp16_1080x1920.engine",
+}
+PROFILES = {
+    (ANIMESR_MODE_ID, 1280, 720): (ENGINE_NAMES[(1280, 720)], 4, "temporal"),
+    (ANIMESR_MODE_ID, 1920, 1080): (ENGINE_NAMES[(1920, 1080)], 4, "temporal"),
+    (ANISCALE2_MODE_ID, 1920, 1080): (
+        "2x_AniScale2S_Compact_i8_60K-fp16_fp16_1080x1920.engine", 2, "spatial"
+    ),
 }
 
 
@@ -44,13 +53,16 @@ def write_native_message(stream, message: dict) -> None:
 
 class MediaSession:
     def __init__(self, websocket, engine, fps: float):
-        from animesr_engine import AV1Encoder
+        from animesr_engine import AV1Encoder, GPUAV1Encoder
 
         self.websocket = websocket
         self.send_lock = threading.Lock()
         self.engine = engine
         self.engine.reset()
-        self.encoder = AV1Encoder(engine.width, engine.height, fps, self.send_binary)
+        encoder = GPUAV1Encoder if engine.gpu_encode else AV1Encoder
+        self.encoder = encoder(
+            engine.width, engine.height, fps, self.send_binary, scale=engine.scale
+        )
 
     def send_json(self, message: dict) -> None:
         with self.send_lock:
@@ -75,14 +87,25 @@ class MediaSession:
 
 
 class MediaServer:
-    def __init__(self, engine_path: Path, width: int, height: int):
-        from animesr_engine import AnimeSREngine
+    def __init__(
+        self,
+        profile_key: tuple[str, int, int],
+        engine_path: Path,
+        scale: int,
+        engine_kind: str,
+    ):
+        from animesr_engine import AnimeSREngine, SpatialEngine
         from werkzeug.serving import WSGIRequestHandler, make_server
 
-        self.width = width
-        self.height = height
+        _, self.width, self.height = profile_key
+        self.profile_key = profile_key
+        self.scale = scale
         # CUDA/TensorRT must be initialized on the native host's main thread.
-        self.engine = AnimeSREngine(engine_path, width, height)
+        self.engine = (
+            SpatialEngine(engine_path, self.width, self.height, scale)
+            if engine_kind == "spatial"
+            else AnimeSREngine(engine_path, self.width, self.height)
+        )
         self.session_lock = threading.Lock()
         self.token = secrets.token_urlsafe(32)
 
@@ -130,8 +153,8 @@ class MediaServer:
             print("AnimeSR TensorRT session initialized.", file=sys.stderr, flush=True)
             session.send_json({
                 "type": "started",
-                "outputWidth": self.width * SCALE,
-                "outputHeight": self.height * SCALE,
+                "outputWidth": self.width * self.scale,
+                "outputHeight": self.height * self.scale,
             })
             while True:
                 message = websocket.receive()
@@ -157,12 +180,15 @@ class MediaServer:
         self.server.shutdown()
 
 
-def resolve_engine_path(width: int, height: int) -> Path:
-    engine_name = ENGINE_NAMES.get((width, height))
-    if not engine_name:
+def resolve_profile(mode_id: str, width: int, height: int) -> tuple[Path, int, str]:
+    profile = PROFILES.get((mode_id, width, height))
+    if not profile:
+        if mode_id == ANISCALE2_MODE_ID:
+            raise ValueError("AniScale2 TensorRT supports 1920x1080 input.")
         raise ValueError("AnimeSR supports 1280x720 and 1920x1080 input.")
+    engine_name, scale, engine_kind = profile
     model_dir = Path(os.environ.get("ANIMESR_MODEL_DIR", Path(__file__).with_name("models")))
-    return model_dir / engine_name
+    return model_dir / engine_name, scale, engine_kind
 
 
 def self_test() -> None:
@@ -176,6 +202,7 @@ def self_test() -> None:
     assert SCALE == 4
     assert (1280 * SCALE, 720 * SCALE) == (5120, 2880)
     assert (1920 * SCALE, 1080 * SCALE) == (7680, 4320)
+    assert PROFILES[(ANISCALE2_MODE_ID, 1920, 1080)][1] == 2
 
 
 def main() -> int:
@@ -198,14 +225,19 @@ def main() -> int:
                     raise ValueError("Unknown native host request.")
                 width = int(request.get("width") or 0)
                 height = int(request.get("height") or 0)
+                mode_id = str(request.get("modeId") or ANIMESR_MODE_ID)
                 if not width or not height:
-                    response = {"requestId": request_id, "ok": True, "supported": list(ENGINE_NAMES)}
+                    response = {"requestId": request_id, "ok": True, "supported": list(PROFILES)}
                 else:
-                    if media_server and (media_server.width, media_server.height) != (width, height):
+                    profile_key = (mode_id, width, height)
+                    engine_path, scale, engine_kind = resolve_profile(*profile_key)
+                    if media_server and media_server.profile_key != profile_key:
                         media_server.close()
                         media_server = None
                     if media_server is None:
-                        media_server = MediaServer(resolve_engine_path(width, height), width, height)
+                        media_server = MediaServer(
+                            profile_key, engine_path, scale, engine_kind
+                        )
                     response = {"requestId": request_id, "ok": True, "endpoint": media_server.endpoint}
             except Exception as error:
                 response = {"requestId": request_id, "ok": False, "error": str(error)}

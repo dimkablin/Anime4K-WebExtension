@@ -1,4 +1,5 @@
 export const NATIVE_SCALE = 4;
+export const ANISCALE2_NATIVE_SCALE = 2;
 
 const SUPPORTED_INPUTS = new Set(['1280x720', '1920x1080']);
 const MIME_TYPE = 'video/mp4; codecs="av01.0.13M.08"';
@@ -12,6 +13,8 @@ interface NativeConnectReply {
 interface RendererOptions {
   video: HTMLVideoElement;
   output: HTMLVideoElement;
+  modeId: string;
+  scale: number;
   onError: (error: Error) => void;
   onFirstFrameRendered: () => void;
 }
@@ -51,16 +54,19 @@ export class AnimeSRRenderer {
     if (!MediaSource.isTypeSupported(MIME_TYPE)) {
       throw new Error('Edge cannot decode the AV1 stream required by AnimeSR.');
     }
-    AnimeSRRenderer.assertInputSize(options.video);
+    AnimeSRRenderer.assertInputSize(options.video, options.scale);
 
     const renderer = new AnimeSRRenderer(options);
     await renderer.initialize();
     return renderer;
   }
 
-  private static assertInputSize(video: HTMLVideoElement): void {
-    if (!SUPPORTED_INPUTS.has(`${video.videoWidth}x${video.videoHeight}`)) {
-      throw new Error('AnimeSR TensorRT currently supports 1280x720 and 1920x1080 input.');
+  private static assertInputSize(video: HTMLVideoElement, scale: number): void {
+    const size = `${video.videoWidth}x${video.videoHeight}`;
+    if (!SUPPORTED_INPUTS.has(size) || (scale === ANISCALE2_NATIVE_SCALE && size !== '1920x1080')) {
+      throw new Error(scale === ANISCALE2_NATIVE_SCALE
+        ? 'AniScale2 TensorRT requires 1920x1080 input.'
+        : 'AnimeSR TensorRT currently supports 1280x720 and 1920x1080 input.');
     }
   }
 
@@ -68,6 +74,7 @@ export class AnimeSRRenderer {
     this.mediaSource.addEventListener('sourceopen', () => this.openSourceBuffer(), { once: true });
     const native = await chrome.runtime.sendMessage({
       type: 'ANIMESR_NATIVE_CONNECT',
+      modeId: this.options.modeId,
       width: this.inputWidth,
       height: this.inputHeight,
     }) as NativeConnectReply;
@@ -130,7 +137,7 @@ export class AnimeSRRenderer {
     if (message.type !== 'started') return;
 
     clearTimeout(timeout);
-    if (message.outputWidth !== this.inputWidth * NATIVE_SCALE || message.outputHeight !== this.inputHeight * NATIVE_SCALE) {
+    if (message.outputWidth !== this.inputWidth * this.options.scale || message.outputHeight !== this.inputHeight * this.options.scale) {
       reject(new Error('AnimeSR native host returned an unexpected output size.'));
       return;
     }
@@ -205,7 +212,7 @@ export class AnimeSRRenderer {
   }
 
   async updateVideoSource(video: HTMLVideoElement): Promise<void> {
-    AnimeSRRenderer.assertInputSize(video);
+    AnimeSRRenderer.assertInputSize(video, this.options.scale);
     if (video.videoWidth !== this.inputWidth || video.videoHeight !== this.inputHeight) {
       throw new Error('Restart AnimeSR after switching to a different source resolution.');
     }
@@ -216,7 +223,7 @@ export class AnimeSRRenderer {
   }
 
   async updateConfiguration(): Promise<void> {
-    // AnimeSR v2 uses one fixed FP16 TensorRT profile and its native x4 output.
+    // Native TensorRT modes use fixed input and output profiles.
   }
 
   destroy(): void {

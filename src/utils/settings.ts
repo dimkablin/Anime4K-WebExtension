@@ -18,6 +18,7 @@ import { AVAILABLE_EFFECTS } from './effects-map';
 import { resolveEffectChain } from './effect-chain-templates';
 
 export const ANIMESR_TENSORRT_MODE_ID = 'builtin-animesr-v2-tensorrt';
+export const ANISCALE2_TENSORRT_MODE_ID = 'builtin-aniscale2-tensorrt';
 
 // ===== 内置模式定义 =====
 export const BUILTIN_MODES: BuiltInMode[] = [
@@ -28,6 +29,7 @@ export const BUILTIN_MODES: BuiltInMode[] = [
   { id: 'builtin-mode-bb', baseMode: 'B+B', name: 'Mode B+B', isBuiltIn: true },
   { id: 'builtin-mode-ca', baseMode: 'C+A', name: 'Mode C+A', isBuiltIn: true },
   { id: ANIMESR_TENSORRT_MODE_ID, baseMode: 'A', name: 'AnimeSR v2 TensorRT (x4, 720p/FHD)', isBuiltIn: true },
+  { id: ANISCALE2_TENSORRT_MODE_ID, baseMode: 'A', name: 'AniScale2 TensorRT (x2, FHD→4K realtime)', isBuiltIn: true },
 ];
 
 // ===== 默认设置 =====
@@ -218,7 +220,7 @@ export function getEffectsForMode(
   tier: PerformanceTier
 ): EnhancementEffect[] {
   if (mode.isBuiltIn) {
-    if (mode.id === ANIMESR_TENSORRT_MODE_ID) return [];
+    if (mode.id === ANIMESR_TENSORRT_MODE_ID || mode.id === ANISCALE2_TENSORRT_MODE_ID) return [];
     // 内置模式：根据档位动态解析
     return resolveEffectChain((mode as BuiltInMode).baseMode, tier);
   } else {
